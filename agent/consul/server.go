@@ -134,9 +134,11 @@ type Server struct {
 	// useNewACLs is used to determine whether we can use new ACLs or not
 	useNewACLs int32
 
+	// 负责 TODO
 	// autopilot is the Autopilot instance for this server.
 	autopilot *autopilot.Autopilot
 
+	// 阻塞直至停止自动更新权限
 	// autopilotWaitGroup is used to block until Autopilot shuts down.
 	autopilotWaitGroup sync.WaitGroup
 
@@ -188,6 +190,7 @@ type Server struct {
 	// serf cluster that spans datacenters
 	eventChWAN chan serf.Event
 
+	// 保证强一致性的 raft 状态机
 	// fsm is the state machine used with Raft to provide
 	// strong consistency.
 	fsm *fsm.FSM
@@ -196,6 +199,7 @@ type Server struct {
 	logger  hclog.InterceptLogger
 	loggers *loggerStore
 
+	// 在相同数据中心的 consul 节点使用 raft 协议保证操作的强一致性
 	// The raft instance is used among Consul nodes within the DC to protect
 	// operations that require strong consistency.
 	// the state directly.

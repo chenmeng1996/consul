@@ -118,25 +118,26 @@ func ConfigSourceFromName(name string) (configSource, bool) {
 	return s, ok
 }
 
+// 定义了代理的公共接口
 // delegate defines the interface shared by both
 // consul.Client and consul.Server.
 type delegate interface {
 	GetLANCoordinate() (lib.CoordinateSet, error)
-	Leave() error
-	LANMembers() []serf.Member
-	LANMembersAllSegments() ([]serf.Member, error)
+	Leave() error                                  //离开集群
+	LANMembers() []serf.Member                     //局域网内所有成员
+	LANMembersAllSegments() ([]serf.Member, error) //局域网内所有段区的成员
 	LANSegmentMembers(segment string) ([]serf.Member, error)
-	LocalMember() serf.Member
-	JoinLAN(addrs []string) (n int, err error)
-	RemoveFailedNode(node string, prune bool) error
+	LocalMember() serf.Member                       //本机成员
+	JoinLAN(addrs []string) (n int, err error)      //加入一个或多个段区
+	RemoveFailedNode(node string, prune bool) error //尝试移除某个异常的节点
 	ResolveToken(secretID string) (acl.Authorizer, error)
 	ResolveTokenToIdentity(secretID string) (structs.ACLIdentity, error)
 	ResolveTokenAndDefaultMeta(secretID string, entMeta *structs.EnterpriseMeta, authzContext *acl.AuthorizerContext) (acl.Authorizer, error)
-	RPC(method string, args interface{}, reply interface{}) error
-	UseLegacyACLs() bool
-	SnapshotRPC(args *structs.SnapshotRequest, in io.Reader, out io.Writer, replyFn structs.SnapshotReplyFn) error
-	Shutdown() error
-	Stats() map[string]map[string]string
+	RPC(method string, args interface{}, reply interface{}) error                                                  //远程调用
+	UseLegacyACLs() bool                                                                                           //是否使用了旧版的ACL加密
+	SnapshotRPC(args *structs.SnapshotRequest, in io.Reader, out io.Writer, replyFn structs.SnapshotReplyFn) error //发起快照存档的远程调用
+	Shutdown() error                                                                                               //关闭代理
+	Stats() map[string]map[string]string                                                                           //应用当前状态
 	ReloadConfig(config *consul.Config) error
 	enterpriseDelegate
 }
@@ -146,6 +147,7 @@ type notifier interface {
 	Notify(string) error
 }
 
+// Agent 代理
 // Agent is the long running process that is run on every machine.
 // It exposes an RPC interface that is used by the CLI to control the
 // agent. The agent runs the query interfaces like HTTP, DNS, and RPC.
@@ -156,12 +158,14 @@ type Agent struct {
 	// TODO: remove fields that are already in BaseDeps
 	baseDeps BaseDeps
 
+	//代理的运行时配置，支持热加载
 	// config is the agent configuration.
 	config *config.RuntimeConfig
 
 	// Used for writing our logs
 	logger hclog.InterceptLogger
 
+	// 代理（服务端或者客户端），角色由配置项决定
 	// delegate is either a *consul.Server or *consul.Client
 	// depending on the configuration
 	delegate delegate
@@ -169,10 +173,12 @@ type Agent struct {
 	// aclMasterAuthorizer is an object that helps manage local ACL enforcement.
 	aclMasterAuthorizer acl.Authorizer
 
+	// 存储本地节点、应用、心跳的状态，用于反熵
 	// state stores a local representation of the node,
 	// services and checks. Used for anti-entropy.
 	State *local.State
 
+	// 负责本地与远端的状态同步
 	// sync manages the synchronization of the local
 	// and the remote state.
 	sync *ae.StateSyncer
@@ -185,6 +191,7 @@ type Agent struct {
 	// cache is the in-memory cache for data the Agent requests.
 	cache *cache.Cache
 
+	// 各种心跳检测（monitor/http/tcp/ttl/docker等）
 	// checkReapAfter maps the check ID to a timeout after which we should
 	// reap its associated service
 	checkReapAfter map[structs.CheckID]time.Duration
@@ -219,9 +226,14 @@ type Agent struct {
 	// dockerClient is the client for performing docker health checks.
 	dockerClient *checks.DockerClient
 
+	// 接收其他节点发送过来的事件
 	// eventCh is used to receive user events
 	eventCh chan serf.UserEvent
 
+	// 用环形队列存储接收到的所有事件
+	// index指向下一个插入的节点
+	// 使用读写锁保证数据安全
+	// 当一个事件被插入时，通知group中所有的订阅者
 	// eventBuf stores the most recent events in a ring buffer
 	// using eventIndex as the next index to insert into. This
 	// is guarded by eventLock. When an insert happens, the
@@ -231,23 +243,28 @@ type Agent struct {
 	eventLock   sync.RWMutex
 	eventNotify NotifyGroup
 
+	// 关闭代理前的操作
 	shutdown     bool
 	shutdownCh   chan struct{}
 	shutdownLock sync.Mutex
 
+	// 添加到局域网成功的回调函数
 	// joinLANNotifier is called after a successful JoinLAN.
 	joinLANNotifier notifier
 
+	// 重试加入局域网失败后，返回错误信息
 	// retryJoinCh transports errors from the retry join
 	// attempts.
 	retryJoinCh chan error
 
+	// 并发安全的存储当前所有节点的唯一名称，用于RPC传输
 	// endpoints maps unique RPC endpoint names to common ones
 	// to allow overriding of RPC handlers since the golang
 	// net/rpc server does not allow this.
 	endpoints     map[string]string
 	endpointsLock sync.RWMutex
 
+	// 为代理提供DNS/HTTP 的API
 	// dnsServer provides the DNS API
 	dnsServers []*DNSServer
 
@@ -276,6 +293,7 @@ type Agent struct {
 	// TODO: remove once dnsServers are handled by apiServers
 	wgServers sync.WaitGroup
 
+	// 追踪当前代理正在运行的所有监控
 	// watchPlans tracks all the currently-running watch plans for the
 	// agent.
 	watchPlans []*watch.Plan
@@ -412,6 +430,7 @@ func LocalConfig(cfg *config.RuntimeConfig) local.Config {
 	return lc
 }
 
+// 决定当前启动的是server还是client的关键代码
 // Start verifies its configuration and runs an agent's various subprocesses.
 func (a *Agent) Start(ctx context.Context) error {
 	a.stateLock.Lock()
@@ -466,6 +485,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		return fmt.Errorf("failed to start Consul enterprise component: %v", err)
 	}
 
+	// 当前节点是server还是client
 	// Setup either the client or the server.
 	if c.ServerMode {
 		server, err := consul.NewServer(consulCfg, a.baseDeps.Deps)

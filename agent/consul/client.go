@@ -33,6 +33,7 @@ const (
 	serfEventBacklogWarning = 200
 )
 
+// 客户端
 // Client is Consul client which uses RPC to communicate with the
 // services for service discovery, health checking, and DC forwarding.
 type Client struct {
@@ -45,9 +46,11 @@ type Client struct {
 	// useNewACLs is a flag to indicate whether we are using the new ACL system
 	useNewACLs int32
 
+	// 连接 服务端 的连接池，用TCP协议
 	// Connection pool to consul servers
 	connPool *pool.ConnPool
 
+	// 用于选择和维护客户端用于RPC请求的服务端
 	// router is responsible for the selection and maintenance of
 	// Consul servers this agent uses for RPC requests
 	router *router.Router
@@ -56,12 +59,14 @@ type Client struct {
 	// from an agent.
 	rpcLimiter atomic.Value
 
+	// 负责接收来自同一个数据中心的事件
 	// eventCh is used to receive events from the serf cluster in the datacenter
 	eventCh chan serf.Event
 
 	// Logger uses the provided LogOutput
 	logger hclog.InterceptLogger
 
+	// 存储当前数据中心的 serf 集群信息
 	// serf is the Serf cluster maintained inside the DC
 	// which contains all the DC nodes
 	serf *serf.Serf

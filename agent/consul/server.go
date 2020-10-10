@@ -205,7 +205,7 @@ type Server struct {
 	// the state directly.
 	raft          *raft.Raft
 	raftLayer     *RaftLayer
-	raftStore     *raftboltdb.BoltStore
+	raftStore     *raftboltdb.BoltStore // 提供 ACID 的高性能 KV数据库
 	raftTransport *raft.NetworkTransport
 	raftInmem     *raft.InmemStore
 
@@ -218,16 +218,19 @@ type Server struct {
 	// updated
 	reconcileCh chan serf.Member
 
+	// 判断leader是否准备好提供一致性读取
 	// readyForConsistentReads is used to track when the leader server is
 	// ready to serve consistent reads, after it has applied its initial
 	// barrier. This is updated atomically.
 	readyForConsistentReads int32
 
+	// 使用信号通知该服务端需要退出集群，并尝试将RPC转发到其他的服务端上
 	// leaveCh is used to signal that the server is leaving the cluster
 	// and trying to shed its RPC traffic onto other Consul servers. This
 	// is only ever closed.
 	leaveCh chan struct{}
 
+	// 路由公网的服务端或者由用户定义的段区域
 	// router is used to map out Consul servers in the WAN and in Consul
 	// Enterprise user-defined areas.
 	router *router.Router
@@ -239,6 +242,7 @@ type Server struct {
 	// rpcConnLimiter limits the number of RPC connections from a single source IP
 	rpcConnLimiter connlimit.Limiter
 
+	// 用于接收进来的请求连接
 	// Listener is used to listen for incoming connections
 	Listener    net.Listener
 	grpcHandler connHandler
@@ -259,19 +263,23 @@ type Server struct {
 	// which contains all the DC nodes
 	serfLAN *serf.Serf
 
+	// 通过段名路由到不同的serf集群
 	// segmentLAN maps segment names to their Serf cluster
 	segmentLAN map[string]*serf.Serf
 
+	// 在同一个数据中心中，由服务端组成的serf集群
 	// serfWAN is the Serf cluster maintained between DC's
 	// which SHOULD only consist of Consul servers
 	serfWAN                *serf.Serf
 	memberlistTransportWAN memberlist.IngestionAwareTransport
 	gatewayLocator         *GatewayLocator
 
+	// 在当前的数据中心进行服务端追踪，提供id与address的相互转换
 	// serverLookup tracks server consuls in the local datacenter.
 	// Used to do leader forwarding and provide fast lookup by server id and address
 	serverLookup *ServerLookup
 
+	// 通知广播，让公网的serf实例知道局域网的服务端发生的变化（退出）
 	// floodLock controls access to floodCh.
 	floodLock sync.RWMutex
 	floodCh   []chan struct{}
@@ -285,10 +293,12 @@ type Server struct {
 	// Consul router.
 	statsFetcher *StatsFetcher
 
+	// 通知需要存储快照，并重新发起leader选举
 	// reassertLeaderCh is used to signal the leader loop should re-run
 	// leadership actions after a snapshot restore.
 	reassertLeaderCh chan chan error
 
+	// tombstone 算法的GC调优参数
 	// tombstoneGC is used to track the pending GC invocations
 	// for the KV tombstones
 	tombstoneGC *state.TombstoneGC
